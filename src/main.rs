@@ -170,10 +170,16 @@ impl Rules {
                 Some(policy) => match policy.as_str() {
                     "any" => Policy::Any,
                     "all" => Policy::All,
-                    x if x.starts_with("threshold(") && x.ends_with(")") => {
+                    x if x.starts_with("threshold(") && x.ends_with(')') => {
                         let threshold = x[10..x.len() - 1].parse::<usize>().map_err(|_| {
                             WSRError::ConfigError(format!("Invalid threshold: [{}]", x))
                         })?;
+                        if threshold == 0 {
+                            return Err(WSRError::ConfigError(format!(
+                                "Invalid threshold: [{}]",
+                                x
+                            )));
+                        }
                         Policy::Threshold(threshold)
                     }
                     x => {
