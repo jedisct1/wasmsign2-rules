@@ -146,8 +146,7 @@ impl Rules {
         for (signers_name_raw, signers_raw) in rules_raw.signers {
             let mut pks = PublicKeySet::empty();
             for public_key_raw in signers_raw.public_keys {
-                let pk = PublicKey::from_file(&public_key_raw.file)?;
-                pks.insert(pk)?;
+                pks.insert_any_file(&public_key_raw.file)?;
             }
             let policy = match &signers_raw.policy {
                 Some(policy) => match policy.as_str() {
