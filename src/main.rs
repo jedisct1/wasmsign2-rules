@@ -1,7 +1,10 @@
+use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
+use std::fs::File;
+use std::io::{self, BufReader};
+use std::io::{Read, Seek};
 use std::path::Path;
 use wasmsign2::reexports::thiserror;
 use wasmsign2::*;
@@ -12,6 +15,8 @@ pub enum WSRError {
     InternalError(String),
     #[error("Configuration error: [{0}]")]
     ConfigError(String),
+    #[error("Verification error for signer set [{0}]")]
+    VerificationError(String),
     #[error("I/O error: [{0}]")]
     IOError(#[from] io::Error),
     #[error("YAML error: [{0}]")]
@@ -36,6 +41,12 @@ mod raw {
     }
 
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    pub(crate) struct Signers {
+        pub policy: Option<String>,
+        pub public_keys: Vec<Signer>,
+    }
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
     pub(crate) struct Rule {
         pub sections: Vec<RequiredSections>,
         pub signers_names: Vec<String>,
@@ -43,7 +54,7 @@ mod raw {
 
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     pub(crate) struct Rules {
-        pub signers: BTreeMap<String, Vec<Signer>>,
+        pub signers: BTreeMap<String, Signers>,
         pub required_signatures: Option<Vec<Rule>>,
         pub rejected_signatures: Option<Vec<Rule>>,
     }
@@ -59,6 +70,7 @@ enum RequiredCustomSections {
 enum RequiredSections {
     StandardSections,
     CustomSections(RequiredCustomSections),
+    Any,
 }
 
 #[derive(Debug, Clone)]
@@ -67,16 +79,28 @@ struct Rule {
     pub signers_names: Vec<String>,
 }
 
+#[derive(Debug, Copy, Clone)]
+enum Policy {
+    Any,
+    All,
+}
+
+#[derive(Debug, Clone)]
+struct Signers {
+    pub policy: Policy,
+    pub pks: PublicKeySet,
+}
+
 #[derive(Debug, Clone)]
 pub struct Rules {
-    signers: BTreeMap<String, PublicKeySet>,
+    signers_map: BTreeMap<String, Signers>,
     required_signatures: Vec<Rule>,
     rejected_signatures: Vec<Rule>,
 }
 
 fn signature_rules(
     required_signatures_raw: &Option<Vec<raw::Rule>>,
-    signers: &BTreeMap<String, PublicKeySet>,
+    signers: &BTreeMap<String, Signers>,
 ) -> Result<Vec<Rule>, WSRError> {
     let mut required_signatures = vec![];
     let required_signatures_raw = match required_signatures_raw {
@@ -101,6 +125,7 @@ fn signature_rules(
                         ));
                     }
                 }
+                "any" => sections.push(RequiredSections::Any),
                 x => {
                     return Err(WSRError::ConfigError(format!(
                         "Unexpected matcher name for a section set: [{}]",
@@ -131,28 +156,120 @@ impl Rules {
         let yaml = fs::read_to_string(file.as_ref())?;
         let rules_raw: raw::Rules = serde_yaml::from_str(&yaml)?;
 
-        let mut signers = BTreeMap::new();
+        let mut signers_map = BTreeMap::new();
         for (signers_name_raw, signers_raw) in rules_raw.signers {
             let mut pks = PublicKeySet::empty();
-            for signer_raw in signers_raw {
-                let pk = PublicKey::from_file(&signer_raw.file)?;
+            for public_key_raw in signers_raw.public_keys {
+                let pk = PublicKey::from_file(&public_key_raw.file)?;
                 pks.insert(pk)?;
             }
-            signers.insert(signers_name_raw, pks);
+            let policy = match &signers_raw.policy {
+                Some(policy) => match policy.as_str() {
+                    "any" => Policy::Any,
+                    "all" => Policy::All,
+                    x => {
+                        return Err(WSRError::ConfigError(format!(
+                            "Unexpected policy name: [{}]",
+                            x
+                        )))
+                    }
+                },
+                None => Policy::Any,
+            };
+            let signers = Signers { policy, pks };
+            signers_map.insert(signers_name_raw, signers);
         }
 
-        let required_signatures = signature_rules(&rules_raw.required_signatures, &signers)?;
-        let rejected_signatures = signature_rules(&rules_raw.rejected_signatures, &signers)?;
+        let required_signatures = signature_rules(&rules_raw.required_signatures, &signers_map)?;
+        let rejected_signatures = signature_rules(&rules_raw.rejected_signatures, &signers_map)?;
 
         let rules = Rules {
-            signers,
+            signers_map,
             required_signatures,
             rejected_signatures,
         };
         Ok(rules)
     }
+
+    pub fn verify(
+        &self,
+        reader: &mut (impl Read + Seek),
+        detached_signature: Option<&[u8]>,
+    ) -> Result<(), WSRError> {
+        for required_signature in &self.required_signatures {
+            for signer_name in &required_signature.signers_names {
+                let signers = self
+                    .signers_map
+                    .get(signer_name)
+                    .ok_or(WSRError::InternalError(format!(
+                        "Signer not found: [{}]",
+                        signer_name
+                    )))?;
+                let pks = &signers.pks;
+
+                let predicate = move |section: &Section| {
+                    for required_sections in &required_signature.sections {
+                        match required_sections {
+                            RequiredSections::Any => return true,
+                            RequiredSections::StandardSections => {
+                                if matches!(section, Section::Standard(_)) {
+                                    return true;
+                                }
+                            }
+                            RequiredSections::CustomSections(RequiredCustomSections::Eq(name)) => {
+                                if let Section::Custom(custom_section) = section {
+                                    if custom_section.name() == *name {
+                                        return true;
+                                    }
+                                }
+                            }
+                            RequiredSections::CustomSections(RequiredCustomSections::Regex(rx)) => {
+                                if let Section::Custom(custom_section) = section {
+                                    let rx = match RegexBuilder::new(rx)
+                                        .case_insensitive(false)
+                                        .multi_line(false)
+                                        .dot_matches_new_line(false)
+                                        .size_limit(1_000_000)
+                                        .dfa_size_limit(1_000_000)
+                                        .nest_limit(1000)
+                                        .build()
+                                    {
+                                        Ok(rx) => rx,
+                                        Err(_) => return false,
+                                    };
+                                    if rx.is_match(custom_section.name()) {
+                                        return true;
+                                    }
+                                }
+                            }
+                        };
+                    }
+                    false
+                };
+                let predicates = vec![Box::new(predicate)];
+
+                reader.rewind()?;
+                let res = pks
+                    .verify_matrix(reader, detached_signature, &predicates)
+                    .unwrap_or_default();
+                match signers.policy {
+                    Policy::All if res.len() != signers.pks.len() => {
+                        return Err(WSRError::VerificationError(signer_name.clone()));
+                    }
+                    Policy::Any if res.is_empty() => {
+                        return Err(WSRError::VerificationError(signer_name.clone()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 fn main() {
-    Rules::from_yaml_file("/tmp/a.yaml").unwrap();
+    let rules = Rules::from_yaml_file("/tmp/a.yaml").unwrap();
+    let f = File::open("/tmp/z2.wasm").unwrap();
+    let mut reader = BufReader::new(f);
+    rules.verify(&mut reader, None).unwrap();
 }
