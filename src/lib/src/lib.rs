@@ -2,30 +2,13 @@ use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::fs::File;
-use std::io::{self, BufReader};
 use std::io::{Read, Seek};
 use std::path::Path;
-use wasmsign2::reexports::thiserror;
 use wasmsign2::*;
 
-#[derive(Debug, thiserror::Error)]
-pub enum WSRError {
-    #[error("Internal error: [{0}]")]
-    InternalError(String),
-    #[error("Configuration error: [{0}]")]
-    ConfigError(String),
-    #[error("Verification error for signer set [{0}]")]
-    VerificationError(String),
-    #[error("Rejected signatures have been found")]
-    RejectedSignaturesError,
-    #[error("I/O error: [{0}]")]
-    IOError(#[from] io::Error),
-    #[error("YAML error: [{0}]")]
-    YAMLError(#[from] serde_yaml::Error),
-    #[error("WASMSign error: [{0}]")]
-    WSError(#[from] wasmsign2::WSError),
-}
+mod error;
+
+pub use error::*;
 
 mod raw {
     use super::*;
@@ -299,11 +282,4 @@ impl Rules {
         }
         Ok(())
     }
-}
-
-fn main() {
-    let rules = Rules::from_yaml_file("/tmp/a.yaml").unwrap();
-    let f = File::open("/tmp/z2.wasm").unwrap();
-    let mut reader = BufReader::new(f);
-    rules.verify(&mut reader, None).unwrap();
 }

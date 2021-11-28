@@ -1,0 +1,10 @@
+[package]
+name = "wasmsign2-rules"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex = "1.5.4"
+serde = { version = "1.0.130", features = ["derive"] }
+serde_yaml = "0.8.21"
+wasmsign2 = "0.1.6"
