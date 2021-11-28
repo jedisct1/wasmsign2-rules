@@ -198,13 +198,9 @@ impl Rules {
     ) -> Result<(), WSRError> {
         for required_signature in &self.required_signatures {
             for signer_name in &required_signature.signers_names {
-                let signers = self
-                    .signers_map
-                    .get(signer_name)
-                    .ok_or(WSRError::InternalError(format!(
-                        "Signer not found: [{}]",
-                        signer_name
-                    )))?;
+                let signers = self.signers_map.get(signer_name).ok_or_else(|| {
+                    WSRError::InternalError(format!("Signer not found: [{}]", signer_name))
+                })?;
                 let pks = &signers.pks;
 
                 let predicate = move |section: &Section| {
