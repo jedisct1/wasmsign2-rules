@@ -17,6 +17,8 @@ pub enum WSRError {
     ConfigError(String),
     #[error("Verification error for signer set [{0}]")]
     VerificationError(String),
+    #[error("Rejected signatures have been found")]
+    RejectedSignaturesError,
     #[error("I/O error: [{0}]")]
     IOError(#[from] io::Error),
     #[error("YAML error: [{0}]")]
@@ -191,20 +193,21 @@ impl Rules {
         Ok(rules)
     }
 
-    pub fn verify(
+    fn _verify(
         &self,
+        rules: &[Rule],
         reader: &mut (impl Read + Seek),
         detached_signature: Option<&[u8]>,
     ) -> Result<(), WSRError> {
-        for required_signature in &self.required_signatures {
-            for signer_name in &required_signature.signers_names {
+        for rule in rules {
+            for signer_name in &rule.signers_names {
                 let signers = self.signers_map.get(signer_name).ok_or_else(|| {
                     WSRError::InternalError(format!("Signer not found: [{}]", signer_name))
                 })?;
                 let pks = &signers.pks;
 
                 let predicate = move |section: &Section| {
-                    for required_sections in &required_signature.sections {
+                    for required_sections in &rule.sections {
                         match required_sections {
                             RequiredSections::Any => return true,
                             RequiredSections::StandardSections => {
@@ -245,9 +248,11 @@ impl Rules {
                 let predicates = vec![Box::new(predicate)];
 
                 reader.rewind()?;
-                let res = pks
-                    .verify_matrix(reader, detached_signature, &predicates)
-                    .unwrap_or_default();
+                let res = match pks.verify_matrix(reader, detached_signature, &predicates) {
+                    Ok(res) if !res.is_empty() => res,
+                    _ => return Err(WSRError::VerificationError(signer_name.clone())),
+                };
+                let res = &res[0];
                 match signers.policy {
                     Policy::All if res.len() != signers.pks.len() => {
                         return Err(WSRError::VerificationError(signer_name.clone()));
@@ -258,6 +263,23 @@ impl Rules {
                     _ => {}
                 }
             }
+        }
+        Ok(())
+    }
+
+    pub fn verify(
+        &self,
+        reader: &mut (impl Read + Seek),
+        detached_signature: Option<&[u8]>,
+    ) -> Result<(), WSRError> {
+        self._verify(&self.required_signatures, reader, detached_signature)?;
+
+        if !self.rejected_signatures.is_empty()
+            && self
+                ._verify(&self.rejected_signatures, reader, detached_signature)
+                .is_ok()
+        {
+            return Err(WSRError::RejectedSignaturesError);
         }
         Ok(())
     }
