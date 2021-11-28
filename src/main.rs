@@ -73,42 +73,40 @@ fn main() {
     }
 
     let mut required_signatures = vec![];
-    for rules_raw in rules_raw.required_signatures {
-        for rule_raw in rules_raw {
-            let mut sections = vec![];
-            for section_raw in rule_raw.sections {
-                match section_raw.r#type.as_str() {
-                    "standard" => {
-                        sections.push(RequiredSections::StandardSections);
-                    }
-                    "custom" => {
-                        if let Some(rx) = section_raw.matching {
-                            sections.push(RequiredSections::CustomSections(
-                                RequiredCustomSections::Regex(rx),
-                            ));
-                        } else if let Some(name) = section_raw.eq {
-                            sections.push(RequiredSections::CustomSections(
-                                RequiredCustomSections::Eq(name),
-                            ));
-                        }
-                    }
-                    _ => panic!("Unexpected custom section name matcher"),
+    for rule_raw in rules_raw.required_signatures.unwrap_or_default() {
+        let mut sections = vec![];
+        for section_raw in rule_raw.sections {
+            match section_raw.r#type.as_str() {
+                "standard" => {
+                    sections.push(RequiredSections::StandardSections);
                 }
-            }
-            for signer_name in &rule_raw.signers_names {
-                if !signers.contains_key(signer_name) {
-                    panic!("Signer name not defined");
+                "custom" => {
+                    if let Some(rx) = section_raw.matching {
+                        sections.push(RequiredSections::CustomSections(
+                            RequiredCustomSections::Regex(rx),
+                        ));
+                    } else if let Some(name) = section_raw.eq {
+                        sections.push(RequiredSections::CustomSections(
+                            RequiredCustomSections::Eq(name),
+                        ));
+                    }
                 }
+                _ => panic!("Unexpected custom section name matcher"),
             }
-            let rule = Rule {
-                sections,
-                signers_names: rule_raw.signers_names,
-            };
-            required_signatures.push(rule);
         }
+        for signer_name in &rule_raw.signers_names {
+            if !signers.contains_key(signer_name) {
+                panic!("Signer name not defined");
+            }
+        }
+        let rule = Rule {
+            sections,
+            signers_names: rule_raw.signers_names,
+        };
+        required_signatures.push(rule);
     }
 
-    let mut rejected_signatures = vec![];
+    let rejected_signatures = vec![];
 
     let rules = Rules {
         signers,
