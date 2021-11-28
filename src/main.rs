@@ -85,6 +85,7 @@ struct Rule {
 enum Policy {
     Any,
     All,
+    Threshold(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +170,12 @@ impl Rules {
                 Some(policy) => match policy.as_str() {
                     "any" => Policy::Any,
                     "all" => Policy::All,
+                    x if x.starts_with("threshold(") && x.ends_with(")") => {
+                        let threshold = x[10..x.len() - 1].parse::<usize>().map_err(|_| {
+                            WSRError::ConfigError(format!("Invalid threshold: [{}]", x))
+                        })?;
+                        Policy::Threshold(threshold)
+                    }
                     x => {
                         return Err(WSRError::ConfigError(format!(
                             "Unexpected policy name: [{}]",
@@ -258,6 +265,9 @@ impl Rules {
                         return Err(WSRError::VerificationError(signer_name.clone()));
                     }
                     Policy::Any if res.is_empty() => {
+                        return Err(WSRError::VerificationError(signer_name.clone()));
+                    }
+                    Policy::Threshold(threshold) if res.len() < threshold => {
                         return Err(WSRError::VerificationError(signer_name.clone()));
                     }
                     _ => {}
