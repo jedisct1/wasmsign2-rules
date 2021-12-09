@@ -1,0 +1,34 @@
+signers:
+  developers:
+    policy: any
+
+    public_keys:
+      - file: /Users/j/.ssh/id_ed25519.pub
+      - file: /tmp/public.key
+
+  reviewers:
+    policy: threshold(2)
+
+    public_keys:
+      - file: /tmp/public.key
+      - file: /tmp/public.key2
+      - file: /Users/j/.ssh/id_ed25519.pub
+
+required_signatures:
+  - sections:
+      - type: standard
+      - type: custom
+        matching: "^[.]debug_*"
+      - type: custom
+        eq: "producers"
+      - type: custom
+        eq: "name"
+
+    signers_names:
+      - developers
+
+  - sections:
+      - type: any
+
+    signers_names:
+      - reviewers
