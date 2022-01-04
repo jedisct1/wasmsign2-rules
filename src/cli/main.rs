@@ -9,29 +9,29 @@ use wasmsign2_rules::Rules;
 fn main() {
     let matches = app_from_crate!()
         .arg(
-            Arg::with_name("rules")
+            Arg::new("rules")
                 .value_name("rules_file")
                 .long("--rules")
-                .short("-r")
-                .multiple(false)
+                .short('r')
+                .multiple_occurrences(false)
                 .required(true)
                 .help("Rules file"),
         )
         .arg(
-            Arg::with_name("input")
+            Arg::new("input")
                 .value_name("input_file")
                 .long("--input")
-                .short("-i")
-                .multiple(false)
+                .short('i')
+                .multiple_occurrences(false)
                 .required(true)
                 .help("WASM input file"),
         )
         .arg(
-            Arg::with_name("signature_file")
+            Arg::new("signature_file")
                 .value_name("signature_file")
                 .long("--signature-file")
-                .short("-S")
-                .multiple(false)
+                .short('S')
+                .multiple_occurrences(false)
                 .help("Signature file"),
         )
         .get_matches();
