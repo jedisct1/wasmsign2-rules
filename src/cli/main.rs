@@ -7,38 +7,35 @@ use clap::Arg;
 use wasmsign2_rules::Rules;
 
 fn main() {
-    let matches = app_from_crate!()
+    let matches = command!()
         .arg(
             Arg::new("rules")
                 .value_name("rules_file")
-                .long("--rules")
+                .long("rules")
                 .short('r')
-                .multiple_occurrences(false)
                 .required(true)
                 .help("Rules file"),
         )
         .arg(
             Arg::new("input")
                 .value_name("input_file")
-                .long("--input")
+                .long("input")
                 .short('i')
-                .multiple_occurrences(false)
                 .required(true)
                 .help("WASM input file"),
         )
         .arg(
             Arg::new("signature_file")
                 .value_name("signature_file")
-                .long("--signature-file")
+                .long("signature-file")
                 .short('S')
-                .multiple_occurrences(false)
                 .help("Signature file"),
         )
         .get_matches();
 
-    let rules_file = matches.value_of("rules").unwrap();
-    let input_file = matches.value_of("input").unwrap();
-    let signature_file = matches.value_of("signature_file");
+    let rules_file = matches.get_one::<String>("rules").unwrap();
+    let input_file = matches.get_one::<String>("input").unwrap();
+    let signature_file = matches.get_one::<String>("signature_file");
 
     let rules = Rules::from_yaml_file(rules_file).unwrap();
     let input = fs::File::open(input_file).unwrap();

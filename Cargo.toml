@@ -8,9 +8,5 @@ name = "wasmsign2-rules"
 path = "src/cli/main.rs"
 
 [dependencies]
-clap = { version = "3.0.0", default-features = false, features = [
-    "std",
-    "cargo",
-    "wrap_help",
-] }
+clap = { version = "4", features = ["std", "cargo", "wrap_help", "string"] }
 wasmsign2-rules = { version = "0.1.0", path = "src/lib" }
