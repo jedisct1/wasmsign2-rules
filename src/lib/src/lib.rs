@@ -114,8 +114,7 @@ fn signature_rules(
                 "any" => sections.push(RequiredSections::Any),
                 x => {
                     return Err(WSRError::ConfigError(format!(
-                        "Unexpected matcher name for a section set: [{}]",
-                        x
+                        "Unexpected matcher name for a section set: [{x}]"
                     )))
                 }
             }
@@ -123,8 +122,7 @@ fn signature_rules(
         for signer_name in &rule_raw.signers_names {
             if !signers.contains_key(signer_name) {
                 return Err(WSRError::ConfigError(format!(
-                    "Signer name not defined: [{}]",
-                    signer_name
+                    "Signer name not defined: [{signer_name}]"
                 )));
             }
         }
@@ -154,20 +152,18 @@ impl Rules {
                     "all" => Policy::All,
                     x if x.starts_with("threshold(") && x.ends_with(')') => {
                         let threshold = x[10..x.len() - 1].parse::<usize>().map_err(|_| {
-                            WSRError::ConfigError(format!("Invalid threshold: [{}]", x))
+                            WSRError::ConfigError(format!("Invalid threshold: [{x}]"))
                         })?;
                         if threshold == 0 {
                             return Err(WSRError::ConfigError(format!(
-                                "Invalid threshold: [{}]",
-                                x
+                                "Invalid threshold: [{x}]"
                             )));
                         }
                         Policy::Threshold(threshold)
                     }
                     x => {
                         return Err(WSRError::ConfigError(format!(
-                            "Unexpected policy name: [{}]",
-                            x
+                            "Unexpected policy name: [{x}]"
                         )))
                     }
                 },
@@ -197,7 +193,7 @@ impl Rules {
         for rule in rules {
             for signer_name in &rule.signers_names {
                 let signers = self.signers_map.get(signer_name).ok_or_else(|| {
-                    WSRError::InternalError(format!("Signer not found: [{}]", signer_name))
+                    WSRError::InternalError(format!("Signer not found: [{signer_name}]"))
                 })?;
                 let pks = &signers.pks;
 
