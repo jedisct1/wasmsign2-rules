@@ -38,17 +38,10 @@ fn main() {
     let signature_file = matches.get_one::<String>("signature_file");
 
     let rules = Rules::from_yaml_file(rules_file).unwrap();
-    let input = fs::File::open(input_file).unwrap();
-    let mut reader = io::BufReader::new(input);
+    let mut reader = io::BufReader::new(fs::File::open(input_file).unwrap());
+    let detached_signature = signature_file.map(|f| fs::read(f).unwrap());
 
-    let detached_signature_vec;
-    let detached_signature = match signature_file {
-        None => None,
-        Some(signature_file) => {
-            detached_signature_vec = fs::read(signature_file).unwrap();
-            Some(detached_signature_vec.as_slice())
-        }
-    };
-
-    rules.verify(&mut reader, detached_signature).unwrap();
+    rules
+        .verify(&mut reader, detached_signature.as_deref())
+        .unwrap();
 }

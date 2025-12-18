@@ -1,5 +1,5 @@
 use regex::RegexBuilder;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Seek};
@@ -13,31 +13,31 @@ pub use error::*;
 mod raw {
     use super::*;
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Deserialize)]
     pub(crate) struct RequiredSections {
         pub r#type: String,
         pub matching: Option<String>,
         pub eq: Option<String>,
     }
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Deserialize)]
     pub(crate) struct Signer {
         pub file: String,
     }
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Deserialize)]
     pub(crate) struct Signers {
         pub policy: Option<String>,
         pub public_keys: Vec<Signer>,
     }
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Deserialize)]
     pub(crate) struct Rule {
         pub sections: Vec<RequiredSections>,
         pub signers_names: Vec<String>,
     }
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Deserialize)]
     pub(crate) struct Rules {
         pub signers: BTreeMap<String, Signers>,
         pub required_signatures: Option<Vec<Rule>>,
@@ -85,39 +85,35 @@ pub struct Rules {
 }
 
 fn signature_rules(
-    required_signatures_raw: &Option<Vec<raw::Rule>>,
+    rules_raw: &Option<Vec<raw::Rule>>,
     signers: &BTreeMap<String, Signers>,
 ) -> Result<Vec<Rule>, WSRError> {
-    let mut required_signatures = vec![];
-    let required_signatures_raw = match required_signatures_raw {
-        Some(rules) => rules,
-        None => return Ok(required_signatures),
+    let Some(rules_raw) = rules_raw else {
+        return Ok(vec![]);
     };
-    for rule_raw in required_signatures_raw {
+    let mut rules = vec![];
+    for rule_raw in rules_raw {
         let mut sections = vec![];
         for section_raw in &rule_raw.sections {
-            match section_raw.r#type.as_str() {
-                "standard" => {
-                    sections.push(RequiredSections::StandardSections);
-                }
-                "custom" => {
-                    if let Some(rx) = &section_raw.matching {
-                        sections.push(RequiredSections::CustomSections(
-                            RequiredCustomSections::Regex(rx.clone()),
-                        ));
-                    } else if let Some(name) = &section_raw.eq {
-                        sections.push(RequiredSections::CustomSections(
-                            RequiredCustomSections::Eq(name.clone()),
-                        ));
+            let section = match section_raw.r#type.as_str() {
+                "standard" => RequiredSections::StandardSections,
+                "any" => RequiredSections::Any,
+                "custom" => match (&section_raw.matching, &section_raw.eq) {
+                    (Some(rx), _) => {
+                        RequiredSections::CustomSections(RequiredCustomSections::Regex(rx.clone()))
                     }
-                }
-                "any" => sections.push(RequiredSections::Any),
+                    (_, Some(name)) => {
+                        RequiredSections::CustomSections(RequiredCustomSections::Eq(name.clone()))
+                    }
+                    _ => continue,
+                },
                 x => {
                     return Err(WSRError::ConfigError(format!(
                         "Unexpected matcher name for a section set: [{x}]"
                     )))
                 }
-            }
+            };
+            sections.push(section);
         }
         for signer_name in &rule_raw.signers_names {
             if !signers.contains_key(signer_name) {
@@ -126,13 +122,12 @@ fn signature_rules(
                 )));
             }
         }
-        let rule = Rule {
+        rules.push(Rule {
             sections,
             signers_names: rule_raw.signers_names.clone(),
-        };
-        required_signatures.push(rule);
+        });
     }
-    Ok(required_signatures)
+    Ok(rules)
 }
 
 impl Rules {
@@ -195,46 +190,30 @@ impl Rules {
                 })?;
                 let pks = &signers.pks;
 
-                let predicate = move |section: &Section| {
-                    for required_sections in &rule.sections {
-                        match required_sections {
-                            RequiredSections::Any => return true,
-                            RequiredSections::StandardSections => {
-                                if matches!(section, Section::Standard(_)) {
-                                    return true;
-                                }
-                            }
-                            RequiredSections::CustomSections(RequiredCustomSections::Eq(name)) => {
-                                if let Section::Custom(custom_section) = section {
-                                    if custom_section.name() == *name {
-                                        return true;
-                                    }
-                                }
-                            }
-                            RequiredSections::CustomSections(RequiredCustomSections::Regex(rx)) => {
-                                if let Section::Custom(custom_section) = section {
-                                    let rx = match RegexBuilder::new(rx)
-                                        .case_insensitive(false)
-                                        .multi_line(false)
-                                        .dot_matches_new_line(false)
-                                        .size_limit(1_000_000)
-                                        .dfa_size_limit(1_000_000)
-                                        .nest_limit(1000)
-                                        .build()
-                                    {
-                                        Ok(rx) => rx,
-                                        Err(_) => return false,
-                                    };
-                                    if rx.is_match(custom_section.name()) {
-                                        return true;
-                                    }
-                                }
-                            }
-                        };
-                    }
-                    false
+                let predicate = |section: &Section| {
+                    rule.sections.iter().any(|req| match req {
+                        RequiredSections::Any => true,
+                        RequiredSections::StandardSections => {
+                            matches!(section, Section::Standard(_))
+                        }
+                        RequiredSections::CustomSections(RequiredCustomSections::Eq(name)) => {
+                            matches!(section, Section::Custom(cs) if cs.name() == *name)
+                        }
+                        RequiredSections::CustomSections(RequiredCustomSections::Regex(rx)) => {
+                            let Section::Custom(cs) = section else {
+                                return false;
+                            };
+                            RegexBuilder::new(rx)
+                                .size_limit(1_000_000)
+                                .dfa_size_limit(1_000_000)
+                                .nest_limit(1000)
+                                .build()
+                                .map(|rx| rx.is_match(cs.name()))
+                                .unwrap_or(false)
+                        }
+                    })
                 };
-                let predicates = vec![Box::new(predicate)];
+                let predicates = [Box::new(predicate)];
 
                 reader.rewind()?;
                 let res = match pks.verify_matrix(reader, detached_signature, &predicates) {
