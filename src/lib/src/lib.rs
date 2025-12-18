@@ -155,9 +155,7 @@ impl Rules {
                             WSRError::ConfigError(format!("Invalid threshold: [{x}]"))
                         })?;
                         if threshold == 0 {
-                            return Err(WSRError::ConfigError(format!(
-                                "Invalid threshold: [{x}]"
-                            )));
+                            return Err(WSRError::ConfigError(format!("Invalid threshold: [{x}]")));
                         }
                         Policy::Threshold(threshold)
                     }
