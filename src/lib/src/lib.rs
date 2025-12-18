@@ -255,3 +255,615 @@ impl Rules {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    const TEST_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tmp");
+
+    fn test_path(name: &str) -> String {
+        format!("{TEST_DIR}/{name}")
+    }
+
+    #[test]
+    fn test_parse_valid_config_any_policy() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    policy: any
+    public_keys:
+      - file: {}
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - dev
+"#,
+            test_path("test1.pub"),
+            test_path("test2.pub")
+        );
+
+        let rules: raw::Rules = serde_yml::from_str(&yaml).unwrap();
+        assert_eq!(rules.signers.len(), 1);
+        assert!(rules.signers.contains_key("dev"));
+        assert_eq!(rules.signers["dev"].policy, Some("any".to_string()));
+        assert_eq!(rules.signers["dev"].public_keys.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_valid_config_all_policy() {
+        let yaml = format!(
+            r#"
+signers:
+  team:
+    policy: all
+    public_keys:
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: standard
+    signers_names:
+      - team
+"#,
+            test_path("test1.pub")
+        );
+
+        let rules: raw::Rules = serde_yml::from_str(&yaml).unwrap();
+        assert_eq!(rules.signers["team"].policy, Some("all".to_string()));
+    }
+
+    #[test]
+    fn test_parse_valid_config_threshold_policy() {
+        let yaml = format!(
+            r#"
+signers:
+  reviewers:
+    policy: threshold(2)
+    public_keys:
+      - file: {}
+      - file: {}
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - reviewers
+"#,
+            test_path("test1.pub"),
+            test_path("test2.pub"),
+            test_path("test3.pub")
+        );
+
+        let rules: raw::Rules = serde_yml::from_str(&yaml).unwrap();
+        assert_eq!(
+            rules.signers["reviewers"].policy,
+            Some("threshold(2)".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_section_types() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    public_keys:
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: standard
+      - type: any
+      - type: custom
+        eq: "name"
+      - type: custom
+        matching: "^[.]debug_.*"
+    signers_names:
+      - dev
+"#,
+            test_path("test1.pub")
+        );
+
+        let rules: raw::Rules = serde_yml::from_str(&yaml).unwrap();
+        let sections = &rules.required_signatures.unwrap()[0].sections;
+        assert_eq!(sections.len(), 4);
+        assert_eq!(sections[0].r#type, "standard");
+        assert_eq!(sections[1].r#type, "any");
+        assert_eq!(sections[2].r#type, "custom");
+        assert_eq!(sections[2].eq, Some("name".to_string()));
+        assert_eq!(sections[3].r#type, "custom");
+        assert_eq!(sections[3].matching, Some("^[.]debug_.*".to_string()));
+    }
+
+    #[test]
+    fn test_load_rules_from_file() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    policy: any
+    public_keys:
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - dev
+"#,
+            test_path("test1.pub")
+        );
+
+        let config_path = test_path("test_config.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let rules = Rules::from_yaml_file(&config_path).unwrap();
+        fs::remove_file(&config_path).unwrap();
+
+        assert_eq!(rules.signers_map.len(), 1);
+        assert!(rules.signers_map.contains_key("dev"));
+    }
+
+    #[test]
+    fn test_invalid_policy_name() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    policy: invalid_policy
+    public_keys:
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - dev
+"#,
+            test_path("test1.pub")
+        );
+
+        let config_path = test_path("test_invalid_policy.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let result = Rules::from_yaml_file(&config_path);
+        fs::remove_file(&config_path).unwrap();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, WSRError::ConfigError(_)));
+    }
+
+    #[test]
+    fn test_invalid_threshold_zero() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    policy: threshold(0)
+    public_keys:
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - dev
+"#,
+            test_path("test1.pub")
+        );
+
+        let config_path = test_path("test_threshold_zero.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let result = Rules::from_yaml_file(&config_path);
+        fs::remove_file(&config_path).unwrap();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_section_type() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    public_keys:
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: unknown_type
+    signers_names:
+      - dev
+"#,
+            test_path("test1.pub")
+        );
+
+        let config_path = test_path("test_invalid_section.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let result = Rules::from_yaml_file(&config_path);
+        fs::remove_file(&config_path).unwrap();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, WSRError::ConfigError(_)));
+    }
+
+    #[test]
+    fn test_undefined_signer_reference() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    public_keys:
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - nonexistent
+"#,
+            test_path("test1.pub")
+        );
+
+        let config_path = test_path("test_undefined_signer.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let result = Rules::from_yaml_file(&config_path);
+        fs::remove_file(&config_path).unwrap();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, WSRError::ConfigError(_)));
+    }
+
+    #[test]
+    fn test_verify_signed_module_success() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    policy: any
+    public_keys:
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - dev
+"#,
+            test_path("test1.pub")
+        );
+
+        let config_path = test_path("test_verify_success.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let rules = Rules::from_yaml_file(&config_path).unwrap();
+        fs::remove_file(&config_path).unwrap();
+
+        let wasm_bytes = fs::read(test_path("signed1.wasm")).unwrap();
+        let mut reader = Cursor::new(wasm_bytes);
+
+        let result = rules.verify(&mut reader, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_unsigned_module_fails() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    policy: any
+    public_keys:
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - dev
+"#,
+            test_path("test1.pub")
+        );
+
+        let config_path = test_path("test_verify_unsigned.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let rules = Rules::from_yaml_file(&config_path).unwrap();
+        fs::remove_file(&config_path).unwrap();
+
+        let wasm_bytes = fs::read(test_path("minimal.wasm")).unwrap();
+        let mut reader = Cursor::new(wasm_bytes);
+
+        let result = rules.verify(&mut reader, None);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSRError::VerificationError(_)));
+    }
+
+    #[test]
+    fn test_verify_wrong_signer_fails() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    policy: any
+    public_keys:
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - dev
+"#,
+            test_path("test2.pub")
+        );
+
+        let config_path = test_path("test_verify_wrong_signer.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let rules = Rules::from_yaml_file(&config_path).unwrap();
+        fs::remove_file(&config_path).unwrap();
+
+        let wasm_bytes = fs::read(test_path("signed1.wasm")).unwrap();
+        let mut reader = Cursor::new(wasm_bytes);
+
+        let result = rules.verify(&mut reader, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_all_policy_success() {
+        let yaml = format!(
+            r#"
+signers:
+  team:
+    policy: all
+    public_keys:
+      - file: {}
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - team
+"#,
+            test_path("test1.pub"),
+            test_path("test2.pub")
+        );
+
+        let config_path = test_path("test_verify_all.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let rules = Rules::from_yaml_file(&config_path).unwrap();
+        fs::remove_file(&config_path).unwrap();
+
+        let wasm_bytes = fs::read(test_path("signed12.wasm")).unwrap();
+        let mut reader = Cursor::new(wasm_bytes);
+
+        let result = rules.verify(&mut reader, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_all_policy_missing_signature_fails() {
+        let yaml = format!(
+            r#"
+signers:
+  team:
+    policy: all
+    public_keys:
+      - file: {}
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - team
+"#,
+            test_path("test1.pub"),
+            test_path("test2.pub")
+        );
+
+        let config_path = test_path("test_verify_all_fail.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let rules = Rules::from_yaml_file(&config_path).unwrap();
+        fs::remove_file(&config_path).unwrap();
+
+        let wasm_bytes = fs::read(test_path("signed1.wasm")).unwrap();
+        let mut reader = Cursor::new(wasm_bytes);
+
+        let result = rules.verify(&mut reader, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_threshold_policy_success() {
+        let yaml = format!(
+            r#"
+signers:
+  team:
+    policy: threshold(2)
+    public_keys:
+      - file: {}
+      - file: {}
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - team
+"#,
+            test_path("test1.pub"),
+            test_path("test2.pub"),
+            test_path("test3.pub")
+        );
+
+        let config_path = test_path("test_verify_threshold.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let rules = Rules::from_yaml_file(&config_path).unwrap();
+        fs::remove_file(&config_path).unwrap();
+
+        let wasm_bytes = fs::read(test_path("signed12.wasm")).unwrap();
+        let mut reader = Cursor::new(wasm_bytes);
+
+        let result = rules.verify(&mut reader, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_threshold_policy_insufficient_fails() {
+        let yaml = format!(
+            r#"
+signers:
+  team:
+    policy: threshold(2)
+    public_keys:
+      - file: {}
+      - file: {}
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - team
+"#,
+            test_path("test1.pub"),
+            test_path("test2.pub"),
+            test_path("test3.pub")
+        );
+
+        let config_path = test_path("test_verify_threshold_fail.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let rules = Rules::from_yaml_file(&config_path).unwrap();
+        fs::remove_file(&config_path).unwrap();
+
+        let wasm_bytes = fs::read(test_path("signed1.wasm")).unwrap();
+        let mut reader = Cursor::new(wasm_bytes);
+
+        let result = rules.verify(&mut reader, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rejected_signatures() {
+        let yaml = format!(
+            r#"
+signers:
+  allowed:
+    public_keys:
+      - file: {}
+  banned:
+    public_keys:
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - allowed
+
+rejected_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - banned
+"#,
+            test_path("test1.pub"),
+            test_path("test2.pub")
+        );
+
+        let config_path = test_path("test_rejected.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let rules = Rules::from_yaml_file(&config_path).unwrap();
+        fs::remove_file(&config_path).unwrap();
+
+        let wasm_bytes = fs::read(test_path("signed12.wasm")).unwrap();
+        let mut reader = Cursor::new(wasm_bytes);
+
+        let result = rules.verify(&mut reader, None);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            WSRError::RejectedSignaturesError
+        ));
+    }
+
+    #[test]
+    fn test_no_required_signatures() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    public_keys:
+      - file: {}
+"#,
+            test_path("test1.pub")
+        );
+
+        let config_path = test_path("test_no_required.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let rules = Rules::from_yaml_file(&config_path).unwrap();
+        fs::remove_file(&config_path).unwrap();
+
+        let wasm_bytes = fs::read(test_path("minimal.wasm")).unwrap();
+        let mut reader = Cursor::new(wasm_bytes);
+
+        let result = rules.verify(&mut reader, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_default_policy_is_any() {
+        let yaml = format!(
+            r#"
+signers:
+  dev:
+    public_keys:
+      - file: {}
+      - file: {}
+
+required_signatures:
+  - sections:
+      - type: any
+    signers_names:
+      - dev
+"#,
+            test_path("test1.pub"),
+            test_path("test2.pub")
+        );
+
+        let config_path = test_path("test_default_policy.yaml");
+        fs::write(&config_path, &yaml).unwrap();
+
+        let rules = Rules::from_yaml_file(&config_path).unwrap();
+        fs::remove_file(&config_path).unwrap();
+
+        let wasm_bytes = fs::read(test_path("signed1.wasm")).unwrap();
+        let mut reader = Cursor::new(wasm_bytes);
+
+        let result = rules.verify(&mut reader, None);
+        assert!(result.is_ok());
+    }
+}
