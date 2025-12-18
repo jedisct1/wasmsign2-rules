@@ -18,7 +18,7 @@ required_signatures:
   - sections:
       - type: standard
       - type: custom
-        matching: "^[.]debug_*"
+        matching: "^[.]debug_.*"
       - type: custom
         eq: "producers"
       - type: custom
