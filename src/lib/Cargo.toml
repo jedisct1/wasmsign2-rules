@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-regex = "1.7.0"
-serde = { version = "1.0.152", features = ["derive"] }
-serde_yaml = "0.9.16"
-wasmsign2 = "0.1.13"
+regex = "1.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_yml = "0.0.12"
+thiserror = "2"
+wasmsign2 = "0.2"

@@ -138,7 +138,7 @@ fn signature_rules(
 impl Rules {
     pub fn from_yaml_file(file: impl AsRef<Path>) -> Result<Rules, WSRError> {
         let yaml = fs::read_to_string(file.as_ref())?;
-        let rules_raw: raw::Rules = serde_yaml::from_str(&yaml)?;
+        let rules_raw: raw::Rules = serde_yml::from_str(&yaml)?;
 
         let mut signers_map = BTreeMap::new();
         for (signers_name_raw, signers_raw) in rules_raw.signers {

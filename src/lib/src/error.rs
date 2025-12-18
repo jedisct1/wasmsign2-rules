@@ -1,5 +1,4 @@
 use std::io;
-use wasmsign2::reexports::thiserror;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WSRError {
@@ -14,7 +13,7 @@ pub enum WSRError {
     #[error("I/O error: [{0}]")]
     IOError(#[from] io::Error),
     #[error("YAML error: [{0}]")]
-    YAMLError(#[from] serde_yaml::Error),
+    YAMLError(#[from] serde_yml::Error),
     #[error("WASMSign error: [{0}]")]
     WSError(#[from] wasmsign2::WSError),
 }
